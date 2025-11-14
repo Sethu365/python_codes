@@ -1,0 +1,6 @@
+psutil
+scapy
+watchdog
+python-systemd ; sys_platform == 'linux'
+pywin32 ; sys_platform == 'win32'
+prettytable

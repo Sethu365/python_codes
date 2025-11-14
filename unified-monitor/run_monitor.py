@@ -1,4 +1,6 @@
 import time
+import platform
+
 from monitor.emitter import EventEmitter
 from monitor.process_monitor import ProcessMonitor
 from monitor.network_monitor import NetworkMonitor
@@ -8,23 +10,44 @@ from monitor.log_monitor import LogMonitor
 from monitor.module_monitor import ModuleMonitor
 from monitor.auth_monitor import AuthMonitor
 
-# -----------------------------
-# SWITCH-CASE STYLE DISPATCH MAP
-# -----------------------------
-def get_monitor_factory(choice: str, emitter: EventEmitter):
-    """
-    Returns a factory (callable) that produces a list of monitors for a given choice.
-    We return a callable so we create monitor instances *after* the user picks options.
-    """
-    choices = {
-        "1": lambda: [ProcessMonitor(emitter)],
-        "2": lambda: [FSMonitor(emitter, paths=["~"])],
-        "3": lambda: [NetworkMonitor(emitter)],
-        "4": lambda: [ModuleMonitor(emitter)],
-        "5": lambda: [AuthMonitor(emitter)],
-        "6": lambda: [LogMonitor(emitter)],
-        "7": lambda: [RegistryMonitor(emitter)],
-        "8": lambda: [
+
+def os_name():
+    return platform.system().lower()
+
+
+def main():
+    print("\n===== Unified Monitor Menu =====")
+    print("1 - Process Monitor")
+    print("2 - File System Monitor")
+    print("3 - Network Monitor")
+    print("4 - Module Monitor")
+    print("5 - Auth Monitor")
+    print("6 - Log Monitor")
+    print("7 - Registry / Config Monitor")
+    print("8 - Run ALL Monitors")
+    print("=======================================")
+
+    choice = input("Enter choice (1-8 or 1,3,6): ").strip().split(",")
+    choice = [c.strip() for c in choice]
+
+    emitter = EventEmitter(out="stdout", output_format="table")
+    print(f"\n[Emitter] Output: table, Target: stdout\n")
+
+    monitor_map = {
+        "1": lambda e: ProcessMonitor(e),
+        "2": lambda e: FSMonitor(e, paths=["~"]),
+        "3": lambda e: NetworkMonitor(e),
+        "4": lambda e: ModuleMonitor(e),
+        "5": lambda e: AuthMonitor(e),
+        "6": lambda e: LogMonitor(e),
+        "7": lambda e: RegistryMonitor(e),
+    }
+
+    monitors = []
+
+    # Handle ALL
+    if "8" in choice:
+        monitors = [
             ProcessMonitor(emitter),
             FSMonitor(emitter, paths=["~"]),
             NetworkMonitor(emitter),
@@ -32,85 +55,44 @@ def get_monitor_factory(choice: str, emitter: EventEmitter):
             AuthMonitor(emitter),
             LogMonitor(emitter),
             RegistryMonitor(emitter),
-        ],
-    }
-    return choices.get(choice)
+        ]
+    else:
+        for c in choice:
+            if c in monitor_map:
+                try:
+                    monitors.append(monitor_map[c](emitter))
+                except Exception as ex:
+                    print(f"[!] Failed to init monitor {c}: {ex}")
 
-
-# -----------------------------
-# MAIN
-# -----------------------------
-def main():
-    print("===== Unified Monitor Switch Menu =====")
-    print("1 - Process Monitor")
-    print("2 - File System Monitor")
-    print("3 - Network Monitor")
-    print("4 - Module Monitor")
-    print("5 - Auth Monitor")
-    print("6 - Log Monitor")
-    print("7 - Registry Monitor")
-    print("8 - Run ALL Monitors")
-    print("=======================================")
-    raw = input("Enter your choice (1-8) or comma-list (e.g. 1,3,5): ").strip()
-
-    # support "1" or "1,3,5"
-    selected = [s.strip() for s in raw.split(",") if s.strip()]
-    if not selected:
-        print("No selection, exiting.")
+    if not monitors:
+        print("[!] No valid monitors loaded. Exiting.")
         return
 
-    emitter = EventEmitter(out="stdout", output_format="table")
+    print("\n[+] Starting active monitoring... Press CTRL+C to stop.\n")
 
-    # collect factories for each selected choice
-    factories = []
-    for ch in selected:
-        fac = get_monitor_factory(ch, emitter)
-        if fac is None:
-            print(f"Invalid choice: {ch}. Skipping.")
-            continue
-        factories.append(fac)
-
-    if not factories:
-        print("No valid monitors selected. Exiting.")
-        return
-
-    # create instances by calling factories and flatten
-    monitor_list = []
-    for fac in factories:
+    for mon in monitors:
         try:
-            insts = fac()
-            if isinstance(insts, list):
-                monitor_list.extend(insts)
-            else:
-                # if factory returned a single monitor instance
-                monitor_list.append(insts)
+            mon.start()
         except Exception as e:
-            print(f"Failed to instantiate monitor for factory {fac}: {e}")
-
-    if not monitor_list:
-        print("No monitors instantiated. Exiting.")
-        return
-
-    print(f"\nStarting monitors for choices: {', '.join(selected)}...\n")
-
-    # Start selected monitors
-    for m in monitor_list:
-        m.start()
-
-    print("Running... Press CTRL + C to stop.\n")
+            print(f"Error starting {type(mon).__name__}: {e}")
 
     try:
         while True:
-            time.sleep(0.5)
+            time.sleep(1)
     except KeyboardInterrupt:
-        print("\nStopping monitors...")
-        for m in monitor_list:
-            m.stop()
-        for m in monitor_list:
-            m.join()
+        print("\n[!] Stopping monitors...")
+        for mon in monitors:
+            try:
+                mon.stop()
+                mon.join()
+            except:
+                continue
         emitter.close()
-        print("All monitors stopped.")
+        print("[✓] Shutdown complete.")
 
 
 if __name__ == "__main__":
     main()
+
+
+#sudo -E .venv/bin/python3 run_monitor.py

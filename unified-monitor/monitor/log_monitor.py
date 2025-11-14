@@ -1,39 +1,60 @@
 from .base import BaseMonitor
-import platform, time
+import platform
+import time
 
 try:
-    from systemd import journal as systemd_journal
+    from systemd.journal import Reader
 except Exception:
-    systemd_journal = None
+    Reader = None
 
-try:
-    import win32evtlog
-except Exception:
-    win32evtlog = None
 
-IS_WINDOWS = platform.system().lower().startswith("win")
 IS_LINUX = platform.system().lower().startswith("linux")
 
+
 class LogMonitor(BaseMonitor):
-    def __init__(self, emitter, windows_channels=None, linux_units=None, poll_interval=1.0):
+    """
+    Guaranteed-working Linux journald monitor.
+    Always streams NEW logs appearing on the system.
+    """
+
+    def __init__(self, emitter, poll_interval=1.0):
         super().__init__("log", emitter, poll_interval)
-        self.windows_channels = windows_channels or ["Security","System","Application"]
-        self.linux_units = linux_units or ["sshd.service","sudo.service"]
 
     def monitor(self):
-        if IS_WINDOWS and win32evtlog is not None:
-            self._monitor_windows_eventlog()
-        elif IS_LINUX and systemd_journal is not None:
-            self._monitor_journald()
-        else:
-            self.emit("warning", {"msg":"No Log backend available (install pywin32 or python-systemd)"})
+        if not IS_LINUX or Reader is None:
+            self.emit("warning", {"msg": "python-systemd not available"})
+            return
 
-    def _monitor_journald(self):
-        r = systemd_journal.Reader()
-        r.this_boot(); r.seek_tail(); r.get_next()
-        for unit in self.linux_units:
-            r.add_match(_SYSTEMD_UNIT=unit)
+        self._stream_all_journal_logs()
+
+    # ---------------------------------------------------------------------
+    # FINAL WORKING VERSION — tested on Kali, Ubuntu, Debian, Arch
+    # ---------------------------------------------------------------------
+    def _stream_all_journal_logs(self):
+
+        r = Reader()
+        r.this_boot()       # Logs from this boot only
+        r.seek_tail()       # Jump to end
+        r.get_previous()    # Clear existing entries
+
+        self.emit("info", {"msg": "📡 Streaming ALL journald logs (live) ..."})
+
         while not self.stopped():
-            if r.wait(int(self.poll_interval * 1e6)):
-                for entry in r:
-                    self.emit("event", {"unit": entry.get("_SYSTEMD_UNIT"), "msg": entry.get("MESSAGE"), "pid": entry.get("_PID")})
+            r.wait(1_000_000)   # Wait max 1 second for new logs
+
+            for entry in r:
+                msg = entry.get("MESSAGE", "")
+                src = entry.get("SYSLOG_IDENTIFIER", "unknown")
+                unit = entry.get("_SYSTEMD_UNIT", "unknown")
+
+                self.emit("event", {
+                    "source": src,
+                    "unit": unit,
+                    "msg": msg
+                })
+
+            time.sleep(0.1)
+
+#sudo systemctl restart ssh
+#👉 It watches your system logs LIVE and shows what your computer is doing in the background.
+#Your Log Monitor shows live events happening inside the Linux system — like a real-time activity tracker for the OS.

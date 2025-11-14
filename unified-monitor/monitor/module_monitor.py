@@ -41,3 +41,8 @@ class ModuleMonitor(BaseMonitor):
             except Exception as e:
                 self.emit("error", {"stage":"module_poll","err":str(e)})
                 time.sleep(self.poll_interval)
+
+
+# ✅ 3. Network Monitor
+# # Monitors network traffic such as new connections or packet flow.
+# Helps identify unusual communication or potential attacks.

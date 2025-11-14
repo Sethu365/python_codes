@@ -46,3 +46,9 @@ class ProcessMonitor(BaseMonitor):
             except Exception as e:
                 self.emit("error", {"stage": "psutil", "err": str(e)})
                 time.sleep(self.poll_interval)
+
+
+
+# ✅ 1. Process Monitor (2 lines)
+# Tracks when new processes start and when existing processes stop.
+# Helps detect suspicious programs running in the background.

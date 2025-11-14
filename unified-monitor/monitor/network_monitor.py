@@ -57,3 +57,9 @@ class NetworkMonitor(BaseMonitor):
             except Exception as e:
                 self.emit("error", {"stage":"psutil_sockets","err":str(e)})
                 time.sleep(self.poll_interval)
+
+
+
+# ✅ 3. Network Monitor (2 lines)
+# Monitors network traffic such as new connections or packet flow.
+# Helps identify unusual communication or potential attacks.
