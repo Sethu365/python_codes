@@ -6,8 +6,8 @@ import platform
 import socket
 from datetime import datetime
 
-from emitter import EventEmitter
-from event import Event
+from monitor.emitter import EventEmitter
+from monitor.event import Event
 
 
 def emit_event(emitter: EventEmitter, source: str, subtype: str, data: dict):

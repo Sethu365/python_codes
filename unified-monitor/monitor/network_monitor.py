@@ -1,65 +1,112 @@
-from .base import BaseMonitor
+import subprocess
 import time
 import platform
-
-try:
-    import psutil
-except Exception:
-    psutil = None
-
-try:
-    from scapy.all import sniff
-except Exception:
-    sniff = None
-
-IS_LINUX = platform.system().lower().startswith("linux")
-
-class NetworkMonitor(BaseMonitor):
-    def __init__(self, emitter, iface=None, bpf_filter=None, poll_interval=2.0):
-        super().__init__("network", emitter, poll_interval)
-        self.iface = iface
-        self.bpf_filter = bpf_filter
-
-    def monitor(self):
-        if sniff is not None:
-            self._monitor_scapy()
-        elif psutil is not None:
-            self._monitor_psutil_sockets()
-        else:
-            self.emit("warning", {"msg":"No provider for NetworkMonitor"})
-
-    def _monitor_scapy(self):
-        def _cb(pkt):
-            if self.stopped():
-                return True
-            try:
-                self.emit("packet", {"summary": str(pkt.summary())})
-            except Exception as e:
-                self.emit("error", {"stage":"scapy", "err": str(e)})
-        sniff(iface=self.iface, prn=_cb, store=False, filter=self.bpf_filter)
-
-    def _monitor_psutil_sockets(self):
-        while not self.stopped():
-            try:
-                conns = psutil.net_connections(kind="inet") if psutil else []
-                for c in conns:
-                    data = {
-                        "fd": c.fd,
-                        "family": str(c.family),
-                        "type": str(c.type),
-                        "laddr": f"{getattr(c.laddr,'ip',None)}:{getattr(c.laddr,'port',None)}" if c.laddr else None,
-                        "raddr": f"{getattr(c.raddr,'ip',None)}:{getattr(c.raddr,'port',None)}" if c.raddr else None,
-                        "status": c.status,
-                        "pid": c.pid
-                    }
-                    self.emit("socket", data)
-                time.sleep(self.poll_interval)
-            except Exception as e:
-                self.emit("error", {"stage":"psutil_sockets","err":str(e)})
-                time.sleep(self.poll_interval)
+import socket
+from datetime import datetime
+from event import Event
+from emitter import EventEmitter
 
 
+# ------------------------------
+# EVENT SENDER
+# ------------------------------
+def emit_event(emitter, subtype, data):
+    event = Event(
+        source="network",
+        subtype=subtype,
+        ts=datetime.now().timestamp(),
+        host=socket.gethostname(),
+        os=platform.platform(),
+        data=data,
+    )
+    emitter.emit(event)
 
-# ✅ 3. Network Monitor (2 lines)
-# Monitors network traffic such as new connections or packet flow.
-# Helps identify unusual communication or potential attacks.
+
+# ------------------------------
+# PARSE A SINGLE ss LINE
+# ------------------------------
+def parse_ss_line(line):
+    """
+    Parse one line from: ss -tunH
+    Format is stable:
+    tcp ESTAB 0 0 127.0.0.1:43210 142.250.77.46:443
+    """
+
+    parts = line.split()
+
+    # Should be >= 6 parts at minimum
+    if len(parts) < 6:
+        return None
+
+    proto = parts[0].lower()
+    state = parts[1].lower()
+
+    # local = second last column
+    # remote = last column
+    local = parts[-2]
+    remote = parts[-1]
+
+    return proto, state, local, remote
+
+
+# ------------------------------
+# GET ALL ACTIVE CONNECTIONS
+# ------------------------------
+def get_connections():
+    # -H removes the header → stable format
+    out = subprocess.check_output(["ss", "-tunH"], text=True)
+    lines = out.strip().splitlines()
+
+    conns = set()
+
+    for line in lines:
+        parsed = parse_ss_line(line)
+        if not parsed:
+            continue
+
+        proto, state, local, remote = parsed
+
+        # Only established connections
+        if "estab" not in state:
+            continue
+
+        conns.add(f"{proto}:{local}->{remote}")
+
+    return conns
+
+
+# ------------------------------
+# MAIN MONITOR LOOP
+# ------------------------------
+def monitor_network(emitter, interval=3):
+    if platform.system().lower() != "linux":
+        emit_event(emitter, "error", {"msg": "Network monitor works only on Linux"})
+        return
+
+    emit_event(emitter, "info", {"msg": "Network monitor started"})
+
+    prev = set()
+
+    while True:
+        curr = get_connections()
+
+        # Detect new connections
+        new = curr - prev
+        for c in new:
+            emit_event(emitter, "connection_new", {"connection": c})
+
+        # Detect closed/old connections
+        old = prev - curr
+        for c in old:
+            emit_event(emitter, "connection_old", {"connection": c})
+
+        prev = curr
+        time.sleep(interval)
+
+
+# ------------------------------
+# RUN DIRECTLY
+# ------------------------------
+if __name__ == "__main__":
+    emitter = EventEmitter(out="stdout", output_format="table")
+    monitor_network(emitter)
